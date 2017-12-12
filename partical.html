@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset=utf-8>
+    <title>My first three.js app</title>
+    <style>
+        body { margin: 0; }
+        canvas { width: 100%; height: 100% }
+    </style>
+</head>
+    <body>
+        <!-- ******** Third party library ************ -->
+        <script src="js/three.js"></script>
+        <script src="js/OrbitControls.js"></script>
+        <script src="js/stats.min.js"></script>
+        <script src="js/dat.gui.min.js"></script>
+        <!-- ***************************************** -->
+        <script src="js/utils.js"></script>
+        <script src="js/meshInitialisation.js"></script>
+        <script>
+            // *******************************************************
+            // Frame rate stats (Refer to stats.min.js github page)
+            (function(){
+                var script=document.createElement('script');
+                script.onload=function(){
+                    var stats=new Stats();
+                    document.body.appendChild(stats.dom);
+                    requestAnimationFrame(function loop(){
+                        stats.update();
+                        requestAnimationFrame(loop)});
+                };
+                script.src='js/stats.min.js';
+                document.head.appendChild(script);
+            })();
+
+            // ********************************************************
+            // Set up GUI
+            var url_substring = window.location.search;
+            var possibleTrails = getUrlVariable( "trails", url_substring );
+            if ( possibleTrails ){
+                possibleTrails = ( possibleTrails == "true" );
+            } else {
+                possibleTrails = false;
+                var url_trail = window.location.href;
+                if( url_trail.indexOf( '?' ) > -1 ){
+                    url_trail += ('&trails=false' );
+                } else {
+                    url_trail += ('?trails=false' );
+                }
+                window.location.href = url_trail;
+            }
+
+            var setupGUI = function () {
+
+                effectController = {
+
+                    time: 1,
+                    GravityM: 80.0,
+                    ParticleV: 1,
+                    displayTrails: false,
+                    restart: function(){
+                                restart( asteroidMesh, planetCore, asteroidRadius, scene,
+                                        allParticleMesh, initialColor, world, possibleTrails );
+                            },
+                    axesHelper: false
+
+                };
+
+                var gui = new dat.GUI();
+
+                gui.add( effectController, "time", 0.0, 3.0, 0.1 );
+                gui.add( effectController, "GravityM", 0., 800.0, 5.0 );
+                gui.add( effectController, "ParticleV", 0.1, 10.0, 0.1 );
+                if ( possibleTrails ){
+                    gui.add( effectController, "displayTrails" );
+                }
+                gui.add( effectController, "restart" );
+
+            };
+
+            setupGUI();
+
+            // ********************************************************
+
+
+            var V_SCALAR = 0.01;
+            var planetRadius = 100;
+            var effectController;
+            var world = {};
+
+            var scene = new THREE.Scene();
+            var camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 2000 );
+            camera.position.z = 250;
+
+            var renderer = new THREE.WebGLRenderer( { antialias: true } );
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            renderer.setSize( window.innerWidth, window.innerHeight );
+            document.body.appendChild( renderer.domElement );
+
+            // handle window resize
+            window.addEventListener( 'resize', function () {
+                var width = window.innerWidth;
+                var height = window.innerHeight;
+                renderer.setSize( width, height );
+                camera.aspect = width / height;
+                camera.updateProjectionMatrix();
+            } );
+
+            // control in the scene
+            controls = new THREE.OrbitControls( camera, renderer.domElement );
+
+            // helper
+            //scene.add( new THREE.AxesHelper( 200 ) );
+
+            // light
+            var alight = new THREE.AmbientLight( 0x888888, 0.1 );
+            scene.add( alight );
+            var dlight = new THREE.DirectionalLight( 0xFFFFFF );
+            dlight.position.x = 200;
+            dlight.position.y = 200;
+            dlight.position.z = 100;
+            dlight.castShadow = true;
+            dlight.shadow.camera.left = -40;
+            dlight.shadow.camera.top = 5;
+            dlight.shadow.camera.bottom = -15;
+            dlight.shadow.camera.near = 100;
+            dlight.shadow.camera.far = 250;
+            scene.add( dlight );
+
+            // set light target
+            var impactPoint = new THREE.Object3D();
+            impactPoint.position.set( 1, 1, 1 );
+            impactPoint.position.setLength( planetRadius );
+            scene.add( impactPoint );
+            dlight.target = impactPoint;
+
+            // helper for light shadow
+//            var helper = new THREE.CameraHelper( dlight.shadow.camera );
+//            scene.add( helper );
+
+            // create stars field
+            var starsCount = 5000;
+            var boundary = 500;
+            var stars = new THREE.Geometry();
+            for (var i_star = 0; i_star < starsCount; i_star++) {
+
+                var star = new THREE.Vector3();
+                // set star initial position
+                var r = randomPointOnCube();
+
+                star.x = r[0] * boundary;
+                star.y = r[1] * boundary;
+                star.z = r[2] * boundary;
+
+                stars.vertices.push( star );
+            }
+            var starsMaterial = new THREE.PointsMaterial( { color: 0xD3D3D3, size: 5 } );
+            var starfield = new THREE.Points( stars, starsMaterial );
+            scene.add( starfield );
+
+
+            // create planet
+            var planetCore = new THREE.Vector3( 0, 0, 0 );
+            var planetGeometry = new THREE.SphereGeometry( planetRadius, 32, 32 );
+            var planetMaterial = new THREE.MeshPhongMaterial();
+            planetMaterial.map = new THREE.TextureLoader().load( 'images/earthmap1k.jpg' );
+            planetMaterial.bumpMap = new THREE.TextureLoader().load( 'images/earthmap1k.jpg' );
+            var planetMesh = new THREE.Mesh( planetGeometry, planetMaterial );
+            planetMesh.r = planetRadius;
+            planetMesh.receiveShadow = true;
+            scene.add( planetMesh );
+
+            // create asteroid
+            var asteroidRadius = 5;
+            var asteroidGeometry = new THREE.SphereGeometry( asteroidRadius, 8, 8 );
+            var asteroidMaterial = new THREE.MeshPhongMaterial( );
+            asteroidMaterial.map = new THREE.TextureLoader().load( 'images/moonmap1k.jpg' );
+            asteroidMaterial.bumpMap = new THREE.TextureLoader().load( 'images/moonbump1k.jpg' );
+            var asteroidMesh = new THREE.Mesh( asteroidGeometry, asteroidMaterial );
+            asteroidMesh.castShadow = true;
+            asteroidMesh.name = "asteroidMesh";
+            var asteroidMesh_v_copy = new THREE.Vector3(); // for storing temp v for multiplication
+            var asteroidMesh_a_copy = new THREE.Vector3(); // for storing temp a for multiplication
+
+            initialiseAsteroid( asteroidMesh, planetCore, asteroidRadius, scene );
+
+            // particleMeshes
+            world.particlesProjected = false;
+            var allParticleMesh = [];
+            // load particle texture
+            particleTexture = new THREE.TextureLoader().load( "images/particle2.png" );
+            var initialColor = 0xFFBF00;
+            var particle_world = new THREE.Vector3(); //  for storing temp local to world position
+            var particle_v_copy = new THREE.Vector3(); //  for storing temp v for multiplication
+            var particle_a_copy = new THREE.Vector3(); //  for storing temp a for multiplication
+
+            var impact_range = asteroidMesh.r;
+            var d_betweenAsPl = distanceBetweenMeshes( asteroidMesh, planetMesh );
+
+            // add all the particle projection points
+            var num_projectPoint = 100;
+            var d_increment = asteroidMesh.r / num_projectPoint;
+            var stubMesh = asteroidMesh.clone();
+            stubMesh.r = asteroidMesh.r;
+
+            // create a material, colour or image texture
+            var pMaterial = new THREE.PointsMaterial({
+                map: particleTexture,
+                vertexColors: THREE.VertexColors,
+                alphaTest: 0.1, // stop rendering if the opacity is lower than this value
+                opacity: 1
+                //transparent: true
+            });
+
+            // get particle number
+            url_substring = window.location.search;
+            var particleCount = getUrlVariable( "particleCount", url_substring );
+            if ( particleCount ){
+                particleCount = parseInt( particleCount );
+            } else {
+                particleCount = 1000;
+                var url = window.location.href;
+                if( url.indexOf( '?' ) > -1 ){
+                    url += ('&particleCount=' + particleCount);
+                } else {
+                    url += ('?particleCount=' + particleCount);
+                }
+                window.location.href = url;
+            }
+
+            // for particle trails
+            var LINE_LENGTH = 10;
+            var lineGroup = new THREE.Group();
+            lineGroup.name = "lineGroup";
+            var lineMaterial = new THREE.LineBasicMaterial({
+                color: 0xffe98c,
+                linewidth: 2
+            });
+            var trailsDisplayed = false;
+
+            for (var i_projectPoint = 0; i_projectPoint < num_projectPoint; i_projectPoint++) {
+
+                d_betweenAsPl = planetMesh.r + d_increment * i_projectPoint;
+                stubMesh.position.setLength( d_betweenAsPl );
+
+                // create particle variables
+                var particlesGeometry = new THREE.Geometry();
+
+                var particleMesh = new THREE.Points(particlesGeometry, pMaterial);
+
+                // get particleMesh position and angle
+                var projectPoint = getProjectionPoint(planetMesh, stubMesh);
+                var px = projectPoint[0];
+                var py = projectPoint[1];
+                var pz = projectPoint[2];
+                particleMesh.position.x = px;
+                particleMesh.position.y = py;
+                particleMesh.position.z = pz;
+                var sin_gamma = projectPoint[3];
+                var cos_gamma = Math.sqrt(1 - sin_gamma * sin_gamma);
+                var tan_gamma = sin_gamma / cos_gamma;
+                var gamma = Math.atan(tan_gamma);
+
+                var tan_dAs2Pl_r = projectPoint[4];
+
+                // rotate particleMesh to face the impact direction
+                var rotate_axis = new THREE.Vector3(0, 1, 0);
+                var rotate_target = stubMesh.position.clone();
+                particleMesh.updateMatrixWorld();
+                particleMesh.worldToLocal(rotate_target);
+                var rotate_angle = rotate_axis.angleTo(rotate_target);
+                rotate_axis.cross(rotate_target.normalize());
+                particleMesh.rotateOnAxis(rotate_axis.normalize(), rotate_angle);
+                particleMesh.updateMatrixWorld();
+
+                var v_factor = ( d_betweenAsPl - planetMesh.r ) / impact_range * 2;
+
+                // now create the individual particles
+                for (var p = 0; p < particleCount; p++) {
+
+                    var particle = new THREE.Vector3();
+                    var color = new THREE.Color( initialColor );
+
+                    // initial direction
+                    var s_dir = new THREE.Spherical();
+
+                    // Randomise the angle to circle
+                    s_dir.theta = ( Math.random() * 2 - 1 ) * 2 * Math.PI;
+                    s_dir.phi = gamma;
+
+                    var dir = new THREE.Vector3().setFromSpherical(s_dir).normalize();
+                    var v_vaule = Math.random() * v_factor;
+                    particle.v = dir;
+                    particle.v.transformDirection( planetMesh.matrixWorld );
+                    particle.v.multiplyScalar( v_vaule );
+                    particle.v_init = particle.v.clone();
+
+                    // cal particle initial position
+                    var D = tan_dAs2Pl_r * stubMesh.r;
+
+                    particle.copy(dir).setLength(D);
+                    particle.xyz_init = particle.clone();
+
+                    particle.a = new THREE.Vector3();
+
+                    // ****************** for particle trail ***********************
+                    if ( possibleTrails ){
+                        var lineGeometry = new THREE.BufferGeometry();
+                        var linePositions = new Float32Array( LINE_LENGTH * 3 * 2 ); // 3 dim per point
+                                                                                     // & double the length for circle back
+                        lineGeometry.addAttribute( 'position', new THREE.BufferAttribute( linePositions, 3 ) );
+
+                        // line
+                        particle.lineMesh = new THREE.Line( lineGeometry, lineMaterial );
+                        particle.lineMesh.nextPointIndex = 0;
+                        lineGroup.add( particle.lineMesh );
+                    }
+
+                    // *************************************************************
+
+                    particlesGeometry.vertices.push(particle);
+                    particlesGeometry.colors.push( color );
+                }
+
+                particleMesh.nextTimeUpdate = true;
+                particleMesh.visible = false;
+                particleMesh.ttl = -1;
+                allParticleMesh.push( particleMesh );
+                scene.add( particleMesh );
+            }
+
+            // contact counter
+            world.contact_count = 0;
+            var release_times = 4;
+            var singleRelease_num = num_projectPoint / release_times;
+
+            // clock
+            var clock = new THREE.Clock();
+            var clock_delta;
+
+            // game logic
+            var update = function () {
+
+                clock_delta = 10 * clock.getDelta();
+                clock_delta = clock_delta < 2 ? clock_delta : 2;
+
+                // if time doesn't stop
+                if ( effectController.time != 0 ){
+
+                    // update the particles after impact
+                    if( world.particlesProjected ){
+
+                        var a_delta_scalar = 0.5 * effectController.time * effectController.time * clock_delta * clock_delta;
+                        var position_delta_scalar = effectController.time * clock_delta * effectController.ParticleV;
+
+                        for ( var p_id = 0; p_id < allParticleMesh.length; p_id++ ){
+                            var particleMeshToBeUpdated = allParticleMesh[ p_id ];
+
+                            // set ttl for the mesh
+//                            if( particleMeshToBeUpdated.ttl == -1 ){
+//                                particleMeshToBeUpdated.ttl = 2000;
+//                            } else if( particleMeshToBeUpdated.ttl == 0 ){
+//                                continue;
+//                            }
+
+                            particleMeshToBeUpdated.visible = true;
+
+                            if( particleMeshToBeUpdated.nextTimeUpdate ){
+                                particleMeshToBeUpdated.nextTimeUpdate = update_particleMesh( particleMeshToBeUpdated,
+                                                                            a_delta_scalar, position_delta_scalar );
+                            }
+
+//                            particleMeshToBeUpdated.ttl--;
+//                            if( particleMeshToBeUpdated.ttl == 0 ){
+//                                scene.remove( particleMeshToBeUpdated );
+//                            }
+                        }
+
+                        if ( possibleTrails ){
+                            trailsDisplayed = effectController.displayTrails;
+                            // add line into scene if toggled
+                            var retrievedLineGroup = scene.getObjectByName( "lineGroup" );
+                            if ( retrievedLineGroup == undefined
+                                    && effectController.displayTrails ){
+
+                                scene.add( lineGroup );
+                            } else if ( retrievedLineGroup != undefined
+                                    && !effectController.displayTrails ){
+
+                                scene.remove( retrievedLineGroup );
+                            }
+                        }
+
+                    }
+
+                    // project particles after impact
+                    d_betweenAsPl = distanceBetweenMeshes( asteroidMesh, planetMesh );
+
+                    if( ( d_betweenAsPl >= planetMesh.r )
+                        && ( d_betweenAsPl <= planetMesh.r + asteroidMesh.r ) ){
+
+                        var impact_depth = asteroidMesh.r - (d_betweenAsPl - planetMesh.r);
+
+                        if( impact_depth > ( impact_range / release_times ) * world.contact_count ){
+
+                            setParticleMeshVisible( world.contact_count * singleRelease_num,
+                                    (world.contact_count + 1) * world.contact_count );
+                            world.contact_count++;
+                        }
+
+                        world.particlesProjected = true;
+                    }
+
+
+                    // move asteroid before impact
+                    if( d_betweenAsPl > planetMesh.r - asteroidMesh.r ){
+                        asteroidMesh.a.setLength( getGravityAccele( effectController.GravityM, d_betweenAsPl ) );
+                        asteroidMesh_a_copy.copy( asteroidMesh.a );
+                        var delta = asteroidMesh_a_copy.multiplyScalar( 0.5 * effectController.time * clock_delta
+                                                                            * effectController.time  * clock_delta );
+                        asteroidMesh_v_copy.copy( asteroidMesh.v );
+                        asteroidMesh.position.add( asteroidMesh_v_copy.multiplyScalar( effectController.time * clock_delta ));
+                        asteroidMesh.position.add( delta );
+                        asteroidMesh_a_copy.copy( asteroidMesh.a );
+                        asteroidMesh.v.add( asteroidMesh_a_copy.multiplyScalar( effectController.time * clock_delta ) );
+                    } else {
+                        // remove asteroid
+                        scene.remove(asteroidMesh);
+                    }
+                }
+
+            };
+
+            // set particle mesh visible from scene
+            var setParticleMeshVisible = function ( start, end ) {
+
+                for ( var p_id = start; p_id < end; p_id++ ){
+                    var particleMeshToBeUpdated = allParticleMesh[ p_id ];
+                    particleMeshToBeUpdated.visible = true;
+                }
+            };
+
+            // update one particle mesh
+            var update_particleMesh = function ( pMesh, a_delta_scalar, position_delta_scalar ) {
+
+                var particleCount = pMesh.geometry.vertices.length;
+                var changeCount = 0;
+                var planet_r = planetMesh.r;
+
+                for (var i = 0; i < particleCount; i++) {
+
+                    var particle_ = pMesh.geometry.vertices[i];
+                    particle_world.copy( particle_ );
+                    var a = particle_.a;
+                    pMesh.localToWorld( particle_world );
+
+                    // check if the particle landed
+                    var d = particle_world.distanceTo( planetCore );
+                    if( d > planet_r ) {
+
+                        // position change
+                        a.copy( planetCore );
+                        pMesh.worldToLocal(a);
+                        a.sub(particle_).normalize();
+                        var accele = getGravityAccele( effectController.GravityM, d );
+                        a.multiplyScalar( accele * effectController.time * clock_delta );
+                        particle_a_copy.copy( a );
+                        var delta = particle_a_copy.multiplyScalar( a_delta_scalar );
+
+                        particle_v_copy.copy( particle_.v );
+                        particle_.add( particle_v_copy.multiplyScalar( position_delta_scalar ) );
+                        particle_.add( delta );
+                        particle_.v.add( a );
+                        changeCount++;
+
+                        // color change
+                        if ( d > ( planetMesh.r + 1 )
+                            && ( pMesh.geometry.colors[i].getHexString() === 'ffbf00' ) ) {
+
+                            pMesh.geometry.colors[i].setHex( 0xFF0000 );
+                            pMesh.geometry.colorsNeedUpdate = true;
+                        }
+
+                        // update line for trails
+                        if ( possibleTrails ) {
+                            if ( effectController.displayTrails ){
+
+                                if ( !trailsDisplayed ){
+                                    // Initialise trails
+                                    particle_.lineMesh.nextPointIndex = 0;
+                                    particle_.lineMesh.geometry.setDrawRange( 0, 0 );
+                                    particle_.lineMesh.visible = true;
+                                }
+
+                                particle_world.copy( particle_ );
+                                pMesh.localToWorld( particle_world );
+                                updateLine( particle_, LINE_LENGTH, particle_world );
+                            } else if ( trailsDisplayed ){
+                                particle_.lineMesh.nextPointIndex = 0;
+                                particle_.lineMesh.geometry.setDrawRange( 0, 0 );
+                                particle_.lineMesh.visible = false;
+                            }
+                        }
+
+                    } else {
+                        if(possibleTrails){
+                            particle_.lineMesh.visible = false;
+                        }
+                    }
+
+                }
+                // flag the update
+                if( changeCount > 0 ){
+                    pMesh.geometry.verticesNeedUpdate = true;
+                    return true;
+                } else {
+                    return false;
+                }
+            };
+
+            // draw scene
+            var render = function () {
+                renderer.render( scene, camera );
+            };
+            // run game loop (update, render, repeat)
+            var GameLoop = function() {
+
+                requestAnimationFrame( GameLoop );
+
+                update();
+                render();
+            };
+            GameLoop();
+
+
+
+        </script>
+    </body>
+</html>
